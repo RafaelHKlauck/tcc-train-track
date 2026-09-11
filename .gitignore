@@ -1,0 +1,14 @@
+# datasets montados por prepare.py (symlinks para o disco de origem)
+datasets/
+
+# saidas do Ultralytics
+runs/
+
+# pesos
+*.pt
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

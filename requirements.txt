@@ -1,0 +1,8 @@
+# Instalar o torch com CUDA 11.8 ANTES do resto:
+#   pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+#   pip install -r requirements.txt
+torch==2.5.1+cu118
+torchvision==0.20.1+cu118
+ultralytics==8.4.37
+numpy==2.2.6
+opencv-python==4.13.0.92
