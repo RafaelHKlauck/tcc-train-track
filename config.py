@@ -63,6 +63,10 @@ DEFAULT_WORKERS = 4
 AUG_PROFILES: dict[str, dict[str, float]] = {
     "default": {},
     "scale": {"scale": 0.9},
+    "identidade": {
+        "hsv_h": 0.0,   
+        "hsv_s": 0.0,
+    },
 }
 
 # Throughput medido nesta máquina (GTX 1050 Ti, yolo11n, imgsz 640, batch 8):
