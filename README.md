@@ -29,11 +29,32 @@ D:\tcc\angulo_aberto\
   min2\ ...
 ```
 
-A numeração dos frames é global e contínua: `min<N>` cobre os frames
-`N*1800 .. (N+1)*1800-1` (1 minuto a 30 fps).
+A numeração dos frames é global e contínua dentro de cada condição, e cada
+pasta `min<N>` cobre exatamente 1 minuto de vídeo.
 
-As raízes ficam em [`config.py`](config.py) e podem ser sobrescritas por
-variável de ambiente (`TCC_DATA_ANG`, `TCC_DATA_BROADCAST`).
+### As duas condições de captura
+
+`--condition ang` (padrão) ou `--condition broadcast`. As duas fontes **não têm
+a mesma taxa de quadros**, e é por isso que a geometria é declarada por condição
+em [`config.py`](config.py) em vez de ser uma constante global:
+
+| | `ang` (ângulo aberto) | `broadcast` |
+|---|---|---|
+| Raiz | `D:\tcc\angulo_aberto` | `D:\tcc\broadcast` |
+| Resolução | 1920×822 | 1920×1080 |
+| FPS | 30 | 60 |
+| Frames por pasta `min` | 1.800 | 3.600 |
+| `min1` começa no frame | 1800 | 0 |
+| Stride padrão | 3 | 6 |
+| Caixa mediana | ~24×69 px | ~170×468 px |
+
+As raízes podem ser sobrescritas por variável de ambiente (`TCC_DATA_ANG`,
+`TCC_DATA_BROADCAST`).
+
+A diferença de escala das caixas (~48× em área) é grande porque o broadcast é um
+plano fechado. Isso é justamente o que o trabalho mede, mas vale registrar no
+texto que a comparação não isola só "broadcast vs wide-angle" — tem uma
+diferença de zoom junto.
 
 ## Uso
 
@@ -60,19 +81,29 @@ andamento. `--allow-partial` segue com o que existir.
 
 ### Split treino/validação
 
-70/30 **por bloco temporal dentro de cada minuto**: os primeiros 1260 frames vão
-para treino, os últimos 540 para validação.
+70/30 **por bloco temporal dentro de cada minuto**: os primeiros 70% dos quadros
+vão para treino, os últimos 30% para validação (1260/540 no `ang`, 2520/1080 no
+`broadcast`).
 
-A 30 fps quadros vizinhos são praticamente idênticos — um shuffle aleatório
-colocaria o mesmo instante dos dois lados e inflaria o mAP. O corte temporal
-também é estável entre cenários: o que é validação no conjunto de 5 min continua
-sendo validação no de 40, o que torna as curvas comparáveis.
+Quadros vizinhos são praticamente idênticos — um shuffle aleatório colocaria o
+mesmo instante dos dois lados e inflaria o mAP. O corte temporal também é
+estável entre cenários: o que é validação no conjunto de 5 min continua sendo
+validação no de 40, o que torna as curvas comparáveis.
 
 ### Subamostragem (`--stride`)
 
-Padrão `--stride 3`, ou seja 10 fps. O volume anotado continua sendo
-5/10/20/40 minutos de vídeo — que é a dimensão que o TCC mede —, muda só a
-densidade de amostragem.
+O padrão **não é um número fixo**: é o stride que deixa a amostragem efetiva em
+`TARGET_FPS` (10 fps) na condição escolhida — 3 no `ang` (30 fps), 6 no
+`broadcast` (60 fps).
+
+Isso é o que mantém a comparação honesta. Com um stride global de 3, o broadcast
+entregaria 840 imagens de treino por minuto de vídeo contra 420 do ângulo
+aberto: o dobro de amostras para o mesmo volume anotado, confundindo exatamente
+a variável que o TCC mede. Com o padrão por condição, ambos dão **420 imagens de
+treino por minuto de vídeo**.
+
+O volume anotado continua sendo 5/10/20/40 minutos de vídeo — que é a dimensão
+que o TCC mede —, muda só a densidade de amostragem.
 
 Medido nesta máquina (GTX 1050 Ti, yolo11n, imgsz 640, batch 8). O gargalo muda
 conforme o cenário cabe ou não no cache de RAM:

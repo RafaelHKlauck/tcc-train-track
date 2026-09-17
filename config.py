@@ -9,38 +9,89 @@ Layout esperado dos dados (exportação CVAT "YOLO 1.1", uma pasta por minuto):
                                              frame_NNNNNN.txt
                              train.txt, obj.names, obj.data
 
-A numeração dos frames é global e contínua: a pasta ``min<N>`` cobre os frames
-``N*1800 .. (N+1)*1800-1`` (1 minuto a 30 fps).
+A numeração dos frames é global e contínua dentro de cada condição, e cada
+pasta ``min<N>`` cobre exatamente 1 minuto de vídeo. Quantos frames isso
+significa depende da taxa de quadros da condição (ver ``Condition``).
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DATASETS_DIR = PROJECT_DIR / "datasets"
 RUNS_DIR = PROJECT_DIR / "runs"
 
-# Condições de captura comparadas no TCC. Cada raiz pode ser sobrescrita por
-# variável de ambiente para o código não travar num caminho fixo.
-CONDITIONS: dict[str, Path] = {
-    "ang": Path(os.environ.get("TCC_DATA_ANG", r"D:\tcc\angulo_aberto")),
-    "broadcast": Path(os.environ.get("TCC_DATA_BROADCAST", r"D:\tcc\broadcast")),
-}
-
 OBJ_SUBDIR = "obj_train_data"
 IMG_EXT = ".png"
 CVAT_MANIFEST = "train.txt"
 
-FPS = 30
-FRAMES_PER_MIN = FPS * 60  # 1800
+# Amostragem efetiva alvo, a mesma nas duas condições. É isto que mantém a
+# comparação honesta: o TCC varia o volume de vídeo anotado (minutos), então
+# os dois cenários precisam contribuir com o mesmo número de quadros por
+# minuto de vídeo, mesmo vindo de fontes com taxas de quadros diferentes.
+TARGET_FPS = 10
 
-# Split 70/30 por bloco temporal dentro de cada minuto: os primeiros 1260
-# frames vão para treino, os últimos 540 para validação. Determinístico e
+# Split 70/30 por bloco temporal dentro de cada minuto: os primeiros 70% dos
+# frames vão para treino, os últimos 30% para validação. Determinístico e
 # estável entre cenários — o que é val no cenário de 5 min continua val no de 40.
-TRAIN_FRAMES = 1260
-VAL_FRAMES = FRAMES_PER_MIN - TRAIN_FRAMES
+TRAIN_RATIO = 0.7
+
+
+@dataclass(frozen=True)
+class Condition:
+    """Geometria dos dados de uma condição de captura.
+
+    O ângulo aberto é 30 fps e o broadcast 60, então tudo que depende de
+    "quantos quadros cabem num minuto" precisa ser por condição — inclusive o
+    stride. Com um stride global, o mesmo ``--stride 3`` amostraria 10 fps no
+    ângulo aberto e 20 fps no broadcast, dando ao broadcast o dobro de imagens
+    de treino para o mesmo volume de vídeo anotado e confundindo exatamente a
+    variável que o trabalho mede.
+
+    ``first_minute`` é o número da pasta que começa no frame 0: no ângulo
+    aberto a ``min1`` começa no frame 1800, no broadcast começa no 0.
+    """
+
+    root: Path
+    fps: int
+    first_minute: int
+
+    @property
+    def frames_per_min(self) -> int:
+        return self.fps * 60
+
+    @property
+    def train_frames(self) -> int:
+        """Quantos quadros de cada minuto vão para o bloco de treino."""
+        return round(self.frames_per_min * TRAIN_RATIO)
+
+    @property
+    def val_frames(self) -> int:
+        return self.frames_per_min - self.train_frames
+
+    @property
+    def default_stride(self) -> int:
+        """Stride que deixa a amostragem efetiva em TARGET_FPS."""
+        return max(1, round(self.fps / TARGET_FPS))
+
+
+# Condições de captura comparadas no TCC. Cada raiz pode ser sobrescrita por
+# variável de ambiente para o código não travar num caminho fixo.
+CONDITIONS: dict[str, Condition] = {
+    "ang": Condition(
+        root=Path(os.environ.get("TCC_DATA_ANG", r"D:\tcc\angulo_aberto")),
+        fps=30,
+        first_minute=0,
+    ),
+    "broadcast": Condition(
+        root=Path(os.environ.get("TCC_DATA_BROADCAST", r"D:\tcc\broadcast")),
+        fps=60,
+        first_minute=1,
+    ),
+}
 
 # Uma única classe. O obj.names exportado pelo CVAT traz uma segunda classe
 # espúria ("a") que nenhum label usa; ela é ignorada de propósito.
@@ -50,7 +101,6 @@ CLASS_NAMES: dict[int, str] = {0: "player"}
 CHECKPOINT_EPOCHS = (10, 25, 50)
 
 DEFAULT_CONDITION = "ang"
-DEFAULT_STRIDE = 3  # 1 frame a cada 3 => 10 fps
 DEFAULT_MODEL = "yolo11n.pt"
 DEFAULT_EPOCHS = 50
 DEFAULT_IMGSZ = 640
@@ -79,14 +129,27 @@ IMGS_PER_SEC_IO = 11.0
 VAL_OVERHEAD = 1.15  # validação por época, em cima do tempo de treino
 
 
-def condition_root(condition: str) -> Path:
-    """Raiz dos dados de uma condição de captura."""
+def get_condition(condition: str) -> Condition:
+    """Geometria dos dados de uma condição de captura."""
     try:
         return CONDITIONS[condition]
     except KeyError:
         raise SystemExit(
             f"Condição desconhecida: {condition!r}. Use uma de: {', '.join(CONDITIONS)}"
         ) from None
+
+
+def condition_root(condition: str) -> Path:
+    return get_condition(condition).root
+
+
+def resolve_stride(condition: str, stride: int | None) -> int:
+    """Stride pedido na CLI, ou o padrão da condição (mesma amostragem efetiva)."""
+    if stride is None:
+        return get_condition(condition).default_stride
+    if stride < 1:
+        raise SystemExit("--stride precisa ser >= 1.")
+    return stride
 
 
 def minute_dir(condition: str, minute: int) -> Path:
@@ -97,10 +160,14 @@ def minute_zip(condition: str, minute: int) -> Path:
     return condition_root(condition) / f"min{minute}.zip"
 
 
-def frame_index_range(minute: int) -> range:
-    """Índices globais de frame cobertos pela pasta min<N>."""
-    start = minute * FRAMES_PER_MIN
-    return range(start, start + FRAMES_PER_MIN)
+def frame_index_range(condition: str, minute: int) -> range:
+    """Índices globais de frame cobertos pela pasta min<N>.
+
+    Só usado como fallback quando a pasta não tem o train.txt do CVAT.
+    """
+    cond = get_condition(condition)
+    start = (minute - cond.first_minute) * cond.frames_per_min
+    return range(start, start + cond.frames_per_min)
 
 
 def frame_stem(index: int) -> str:

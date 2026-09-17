@@ -203,25 +203,28 @@ def main() -> None:
     config.safe_streams()
     args = build_parser().parse_args()
 
-    run_name = config.run_name(args.condition, args.minutes, args.stride, args.aug)
+    # o stride padrão depende da condição (30 vs 60 fps), então resolve antes
+    # de montar o nome do run
+    stride = config.resolve_stride(args.condition, args.stride)
+    run_name = config.run_name(args.condition, args.minutes, stride, args.aug)
     project_dir = config.RUNS_DIR / "detect"
     run_dir = project_dir / run_name
     checkpoints = resolve_checkpoints(args.checkpoints, args.resume, run_dir)
-    data_yaml = config.scenario_dir(args.condition, args.minutes, args.stride) / "data.yaml"
+    data_yaml = config.scenario_dir(args.condition, args.minutes, stride) / "data.yaml"
 
     if args.no_prepare:
         if not data_yaml.is_file():
             raise SystemExit(
                 f"--no-prepare mas o dataset não existe: {data_yaml}\n"
                 f"Rode sem --no-prepare, ou: python prepare.py {args.minutes} "
-                f"--condition {args.condition} --stride {args.stride}"
+                f"--condition {args.condition} --stride {stride}"
             )
         print(f"--no-prepare: usando {data_yaml}")
     else:
         data_yaml = prepare.prepare(
             condition=args.condition,
             minutes=args.minutes,
-            stride=args.stride,
+            stride=stride,
             clean=args.clean,
             force=args.force,
             strict=args.strict,
@@ -281,7 +284,7 @@ def main() -> None:
         "run": run_name,
         "condition": args.condition,
         "minutes": args.minutes,
-        "stride": args.stride,
+        "stride": stride,
         "aug_profile": args.aug,
         "aug_overrides": aug,
         "model": args.model,

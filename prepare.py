@@ -61,7 +61,7 @@ class MinuteReport:
         return not self.errors
 
 
-def _expected_stems(minute: int, minute_path: Path) -> list[str]:
+def _expected_stems(condition: str, minute: int, minute_path: Path) -> list[str]:
     """Lista de frames que a pasta deveria ter.
 
     Prefere o ``train.txt`` gerado pelo próprio CVAT, que é o manifesto
@@ -77,7 +77,7 @@ def _expected_stems(minute: int, minute_path: Path) -> list[str]:
                 stems.append(Path(line).stem)
         if stems:
             return sorted(set(stems))
-    return [config.frame_stem(i) for i in config.frame_index_range(minute)]
+    return [config.frame_stem(i) for i in config.frame_index_range(condition, minute)]
 
 
 def _read_label(path: Path) -> tuple[bool, set[str]]:
@@ -118,7 +118,7 @@ def scan_minute(condition: str, minute: int, strict: bool = False) -> MinuteRepo
             elif name.endswith(".txt"):
                 labels.add(name[:-4])
 
-    report.expected = _expected_stems(minute, minute_path)
+    report.expected = _expected_stems(condition, minute, minute_path)
     expected_set = set(report.expected)
     report.missing_images = sorted(expected_set - images)
     report.missing_labels = sorted(expected_set - labels)
@@ -203,7 +203,9 @@ def validate(
 # --------------------------------------------------------------------------- #
 
 
-def split_stems(stems: list[str], stride: int) -> tuple[list[str], list[str]]:
+def split_stems(
+    stems: list[str], stride: int, cond: config.Condition
+) -> tuple[list[str], list[str]]:
     """Separa os frames de um minuto em treino/val por bloco temporal.
 
     A posição dentro do minuto vem do índice global do frame; o stride é
@@ -213,23 +215,23 @@ def split_stems(stems: list[str], stride: int) -> tuple[list[str], list[str]]:
     val: list[str] = []
     for stem in stems:
         index = int(stem.rsplit("_", 1)[1])
-        pos = index % config.FRAMES_PER_MIN
-        if pos < config.TRAIN_FRAMES:
+        pos = index % cond.frames_per_min
+        if pos < cond.train_frames:
             if pos % stride == 0:
                 train.append(stem)
-        elif (pos - config.TRAIN_FRAMES) % stride == 0:
+        elif (pos - cond.train_frames) % stride == 0:
             val.append(stem)
     return train, val
 
 
 def collect_items(
-    reports: list[MinuteReport], stride: int
+    reports: list[MinuteReport], stride: int, cond: config.Condition
 ) -> tuple[list[tuple[Path, str]], list[tuple[Path, str]]]:
     """Monta as listas (pasta de origem, stem) de treino e validação."""
     train: list[tuple[Path, str]] = []
     val: list[tuple[Path, str]] = []
     for report in reports:
-        t, v = split_stems(report.usable, stride)
+        t, v = split_stems(report.usable, stride, cond)
         train.extend((report.obj_dir, stem) for stem in t)
         val.extend((report.obj_dir, stem) for stem in v)
     return train, val
@@ -311,6 +313,7 @@ def write_data_yaml(scenario: Path) -> Path:
 def _manifest(
     condition: str, minutes: int, stride: int, link_mode: str, n_train: int, n_val: int
 ) -> dict:
+    cond = config.get_condition(condition)
     return {
         "condition": condition,
         "data_root": str(config.condition_root(condition)),
@@ -319,9 +322,11 @@ def _manifest(
         "stride": stride,
         "split": {
             "rule": "bloco temporal por minuto",
-            "frames_per_min": config.FRAMES_PER_MIN,
-            "train_frames": config.TRAIN_FRAMES,
-            "val_frames": config.VAL_FRAMES,
+            "fps": cond.fps,
+            "frames_per_min": cond.frames_per_min,
+            "train_frames": cond.train_frames,
+            "val_frames": cond.val_frames,
+            "effective_fps": cond.fps / stride,
         },
         "link_mode": link_mode,
         "class_names": {str(k): v for k, v in config.CLASS_NAMES.items()},
@@ -332,7 +337,7 @@ def _manifest(
 def prepare(
     condition: str = config.DEFAULT_CONDITION,
     minutes: int = 5,
-    stride: int = config.DEFAULT_STRIDE,
+    stride: int | None = None,
     *,
     clean: bool = False,
     force: bool = False,
@@ -343,11 +348,11 @@ def prepare(
     epochs: int = config.DEFAULT_EPOCHS,
 ) -> Path:
     """Valida, monta e devolve o caminho do data.yaml do cenário."""
-    if stride < 1:
-        raise SystemExit("--stride precisa ser >= 1.")
+    stride = config.resolve_stride(condition, stride)
+    cond = config.get_condition(condition)
 
     reports = validate(condition, minutes, strict=strict, allow_partial=allow_partial)
-    train_items, val_items = collect_items(reports, stride)
+    train_items, val_items = collect_items(reports, stride, cond)
 
     if not train_items:
         raise SystemExit("Nenhum frame de treino selecionado — verifique o --stride.")
@@ -363,7 +368,10 @@ def prepare(
     print()
     print(f"Cenário    : {config.scenario_name(condition, minutes, stride)}")
     print(f"Minutos    : min1 .. min{minutes} ({len(reports)} pasta(s))")
-    print(f"Stride     : {stride} ({config.FPS // stride} fps efetivos)")
+    print(
+        f"Stride     : {stride} de {cond.fps} fps "
+        f"=> {cond.fps / stride:g} fps efetivos"
+    )
     print(f"Treino/val : {len(train_items)} / {len(val_items)} imagens")
     if sampled:
         pct = 100 * (1 - empty / sampled)
@@ -436,8 +444,9 @@ def add_dataset_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--stride",
         type=int,
-        default=config.DEFAULT_STRIDE,
-        help="Pega 1 frame a cada N (3 = 10 fps).",
+        default=None,
+        help="Pega 1 quadro a cada N. Padrão: o que deixa a amostragem em "
+        "{} fps na condição escolhida (ang=3, broadcast=6).".format(config.TARGET_FPS),
     )
     parser.add_argument("--clean", action="store_true", help="Apaga a pasta do cenário antes.")
     parser.add_argument("--force", action="store_true", help="Remonta mesmo se o manifest bater.")
