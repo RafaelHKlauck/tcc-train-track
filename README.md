@@ -187,6 +187,52 @@ Duas armadilhas do Ultralytics que o `train.py` contorna:
   ignorados; por isso o `run_meta.json` grava os valores efetivos do trainer, e
   não os da CLI.
 
+## Validação no segundo tempo
+
+`validate.py` avalia os pesos já treinados em dados que nenhum treino viu: o
+segundo tempo de cada condição. **Não treina nada**, só roda o `model.val()` do
+Ultralytics.
+
+| | `ang` (ângulo aberto) | `broadcast` |
+|---|---|---|
+| Raiz | `D:\tcc\angulo_aberto_segundo_tempo` | `D:\tcc\broadcast_segundo_tempo` |
+| FPS / frames por pasta `min` | 30 / 1.800 | 60 / 3.600 |
+| Stride padrão | 3 | 6 |
+| Imagens com 20 min | 12.000 | 12.000 |
+
+As raízes podem ser sobrescritas por variável de ambiente (`TCC_TEST_ANG`,
+`TCC_TEST_BROADCAST`). O layout é o mesmo da exportação do CVAT usada no treino.
+
+```bash
+python validate.py                                  # os 2 melhores modelos, 20 min, 10 fps
+python validate.py --runs ang_10min_s3_default      # runs específicas
+python validate.py --all-runs --weights best epoch025
+python validate.py --minutes 16 --allow-partial     # enquanto a anotação não termina
+python validate.py --dry-run                        # só confere os dados
+```
+
+- **Modelos padrão**: `ang_20min_s3_identidade` e `broadcast_40min_s6_identidade`,
+  os de maior mAP50-95 na validação do treino, com o `best.pt`.
+- **Cada modelo é avaliado só na sua condição.** A condição vem do
+  `run_meta.json` (ou do prefixo do nome do run).
+- **Sem split**: todo o segundo tempo é teste. O stride é aplicado na ordem do
+  `train.txt` de cada minuto, então frames faltando não deslocam a amostragem.
+- **Checagem do fps**: se um `train.txt` não tiver `fps × 60` frames, o script
+  avisa, porque o stride deixaria de dar 10 fps efetivos.
+- **imgsz** é o mesmo do treino de cada run (lido do `args.yaml`). O batch de
+  validação é 16, o mesmo que o Ultralytics usou na validação durante o treino.
+
+Saídas:
+
+```
+datasets/segundo_tempo/ang_20min_s3/     # conjunto de teste (symlinks) + manifest.json
+runs/val/ang_20min_s3_identidade__best/  # curvas, matriz de confusão, metrics.json
+runs/val/segundo_tempo.csv               # uma linha por (run, peso, conjunto)
+```
+
+A tabela traz P, R, mAP50 e mAP50-95 no segundo tempo, o mAP50-95 que o mesmo
+peso teve na validação do treino e a diferença entre os dois.
+
 ## Estrutura
 
 | arquivo | papel |
@@ -194,3 +240,11 @@ Duas armadilhas do Ultralytics que o `train.py` contorna:
 | [`config.py`](config.py) | raízes de dados, geometria dos minutos, perfis de aumento, épocas de checkpoint |
 | [`prepare.py`](prepare.py) | valida as pastas, faz o split e monta o dataset com symlinks |
 | [`train.py`](train.py) | entrypoint: prepara, treina e salva os checkpoints |
+| [`validate.py`](validate.py) | avalia os pesos treinados no segundo tempo, sem treinar |
+
+## Rastreamento
+
+O rastreamento do Araújo (SORT, DeepSORT e ByteTrack, nas versões MOT clássico, MOT custom e
+MOT custom com filtro do time) fica nas pastas `detection/` e `tracking/`. Cada combinação de
+captura, versão, algoritmo e configuração é um arquivo `run_default.py` / `run_custom.py`.
+Instruções em [`TRACKING.md`](TRACKING.md).

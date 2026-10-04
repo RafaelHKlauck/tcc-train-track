@@ -12,3 +12,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# rastreamento (detection/ e tracking/): tudo o que é gerado fica em results/
+results/
+third_party/sort.py
+*.mp4
