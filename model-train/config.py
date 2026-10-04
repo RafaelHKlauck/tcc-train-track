@@ -20,7 +20,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parent
+# Os scripts de treino ficam em model-train/, mas datasets/ e runs/ continuam na raiz do projeto.
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 DATASETS_DIR = PROJECT_DIR / "datasets"
 RUNS_DIR = PROJECT_DIR / "runs"
 
