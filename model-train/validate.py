@@ -528,7 +528,8 @@ def update_summary(rows: list[dict]) -> None:
     existing: list[dict] = []
     if SUMMARY_CSV.is_file():
         with SUMMARY_CSV.open(encoding="utf-8", newline="") as fh:
-            existing = list(csv.DictReader(fh))
+            # ignora linhas vazias ou quebradas (ex.: o CSV foi aberto e salvo no Excel, que põe ";;")
+            existing = [r for r in csv.DictReader(fh) if r.get("run") and r.get("condicao")]
     key = lambda r: (r["run"], r["peso"], r["conjunto"])  # noqa: E731
     fresh = {key(r) for r in rows}
     merged = [r for r in existing if key(r) not in fresh] + rows

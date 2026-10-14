@@ -17,3 +17,9 @@ venv/
 results/
 third_party/sort.py
 *.mp4
+
+# ambiente separado do SOT (opencv-contrib briga com o opencv-python do Ultralytics)
+.venv-sot/
+
+# modelos ONNX dos rastreadores, baixados pelo tracking/SOT/download_models.py
+tracking/SOT/models/
